@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   useAccount,
   useBalance,
@@ -9,25 +9,32 @@ import {
 } from "wagmi";
 import { toast } from "react-toastify";
 import { STAKING_CONTRACT } from "../utils/web3";
-
 import { parseEther } from "viem";
 import { formatEther } from "ethers";
-import { waitForTransactionReceipt } from "viem/actions";
+import { waitForTransactionReceipt } from "@wagmi/core";
 import { config } from "../utils/providers/ProviderWallet";
 
 const StakePage = () => {
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
   const [stakeAmount, setStakeAmount] = useState("");
-  const [transactionHash, setTransactionHash] = useState("");
-
-  const { isLoading: isTransactionPending } = useWaitForTransactionReceipt({
-    hash: transactionHash as `0x${string}`,
+  const [duration, setDuration] = useState({
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
   });
+  const [isPendingTx, setIsPendingTx] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Contract hooks
+  const { writeContractAsync } = useWriteContract();
+
+  // Data fetching hooks
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address,
   });
-  const { writeContract, writeContractAsync } = useWriteContract();
+
   const {
     data: dataStake,
     isLoading: isLoadingStake,
@@ -38,13 +45,63 @@ const StakePage = () => {
     functionName: "stakingBalance",
     args: [address],
   });
-  const { data: pendingReward, isLoading: isLoadingReward } = useReadContract({
+
+  const {
+    data: pendingReward,
+    isLoading: isLoadingReward,
+    refetch: refetchReward,
+  } = useReadContract({
     address: STAKING_CONTRACT.address,
     abi: STAKING_CONTRACT.abi,
     functionName: "getPendingReward",
     args: [address],
   });
 
+  const refreshData = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([refetchEthBalance(), refetchStake(), refetchReward()]);
+    } catch (error) {
+      console.error("Error refreshing data:", error);
+    }
+    setIsRefreshing(false);
+  }, [refetchEthBalance, refetchStake, refetchReward]);
+
+  const handleTransaction = async (
+    action: () => Promise<`0x${string}`>,
+    loadingMessage: string,
+    successMessage: string
+  ) => {
+    const toastId = toast.loading(loadingMessage);
+    try {
+      const tx = await action();
+      setIsPendingTx(true);
+      await waitForTransactionReceipt(config, {
+        hash: tx,
+      });
+      await refreshData();
+
+      toast.update(toastId, {
+        render: successMessage,
+        type: "success",
+        isLoading: false,
+        autoClose: 2000,
+      });
+      setIsPendingTx(false);
+      return true;
+    } catch (error: any) {
+      toast.update(toastId, {
+        render: error?.message || "Transaction failed",
+        type: "error",
+        isLoading: false,
+        autoClose: 5000,
+      });
+      setIsPendingTx(false);
+      return false;
+    }
+  };
+
+  // Action handlers
   const handleStake = async () => {
     if (
       !stakeAmount ||
@@ -55,181 +112,192 @@ const StakePage = () => {
       return;
     }
 
-    const toastId = toast.loading("Initiating staking transaction...");
-    try {
-      const tx = await writeContractAsync({
-        abi: STAKING_CONTRACT.abi,
-        address: STAKING_CONTRACT.address,
-        functionName: "stake",
-        value: parseEther(stakeAmount.toString()),
-      });
-      setTransactionHash(tx);
-      toast.update(toastId, {
-        render: "Staking transaction submitted...",
-        type: "info",
-        isLoading: true,
-      });
+    const success = await handleTransaction(
+      () =>
+        writeContractAsync({
+          abi: STAKING_CONTRACT.abi,
+          address: STAKING_CONTRACT.address,
+          functionName: "stake",
+          value: parseEther(stakeAmount.toString()),
+        }),
+      "Initiating staking transaction...",
+      "Staking successful!"
+    );
 
-      await waitForTransactionReceipt(config as any, {
-        hash: tx,
-      });
-      refetchStake();
-      refetchEthBalance();
-      toast.update(toastId, {
-        render: "Staking successful!",
-        type: "success",
-        isLoading: false,
-        autoClose: 5000,
-      });
-
+    if (success) {
       setStakeAmount("");
-    } catch (error: any) {
-      toast.update(toastId, {
-        render: error?.message || "Staking failed",
-        type: "error",
-        isLoading: false,
-        autoClose: 5000,
-      });
-    }
-  };
-  const handleUnstake = async () => {
-    const toastId = toast.loading("Initiating unstaking transaction...");
-    try {
-      const tx = await writeContractAsync({
-        abi: STAKING_CONTRACT.abi,
-        address: STAKING_CONTRACT.address,
-        functionName: "unstake",
-      });
-      setTransactionHash(tx);
-      toast.update(toastId, {
-        render: "Staking transaction submitted...",
-        type: "info",
-        isLoading: true,
-      });
-
-      await waitForTransactionReceipt(config as any, {
-        hash: tx,
-      });
-      refetchStake();
-      refetchEthBalance();
-    } catch (error: any) {
-      toast.update(toastId, {
-        render: error?.message || "Unstaking Failed",
-        type: "error",
-        isLoading: false,
-        autoClose: 5000,
-      });
-    }
-  };
-  const handleClaim = async () => {
-    const toastId = toast.loading("Initiating reward claim...");
-
-    try {
-      const tx = await writeContractAsync({
-        abi: STAKING_CONTRACT.abi,
-        address: STAKING_CONTRACT.address,
-        functionName: "claimReward",
-      });
-      setTransactionHash(tx);
-      toast.update(toastId, {
-        render: "Claiming reward...",
-        type: "info",
-        isLoading: true,
-      });
-      await waitForTransactionReceipt(config as any, {
-        hash: tx,
-      });
-
-      toast.update(toastId, {
-        render: "Reward claimed!",
-        type: "success",
-        isLoading: false,
-        autoClose: 5000,
-      });
-      refetchStake();
-      refetchEthBalance();
-    } catch (error: any) {
-      toast.update(toastId, {
-        render: error?.message || "Reward claim failed",
-        type: "error",
-        isLoading: false,
-        autoClose: 5000,
-      });
     }
   };
 
-  //   useEffect(() => {
-  //     if (isTransactionPending && isSuccess) {
-  //       toast.success("Transaction successful");
-  //       refetchStake();
-  //       refetchEthBalance();
-  //     }
-  //   }, [isTransactionPending, isSuccess]);
+  const handleUnstake = () =>
+    handleTransaction(
+      () =>
+        writeContractAsync({
+          abi: STAKING_CONTRACT.abi,
+          address: STAKING_CONTRACT.address,
+          functionName: "unstake",
+        }),
+      "Initiating unstaking transaction...",
+      "Unstaking successful!"
+    );
+
+  const handleClaim = () =>
+    handleTransaction(
+      () =>
+        writeContractAsync({
+          abi: STAKING_CONTRACT.abi,
+          address: STAKING_CONTRACT.address,
+          functionName: "claimReward",
+        }),
+      "Initiating reward claim...",
+      "Rewards claimed successfully!"
+    );
+
+  const handleDisconnect = () => {
+    disconnect();
+    toast.success("Disconnected successfully");
+  };
+
+  const isActionDisabled = isPendingTx || isRefreshing;
+
+  const { data: lastStakeTime, isLoading: isLoadingStakeTime } =
+    useReadContract({
+      address: STAKING_CONTRACT.address,
+      abi: STAKING_CONTRACT.abi,
+      functionName: "lastStakeTime",
+      args: [address],
+    });
+  useEffect(() => {
+    if (lastStakeTime) {
+      const interval = setInterval(() => {
+        const now = Math.floor(Date.now() / 1000);
+        const seconds = now - Number(lastStakeTime);
+
+        const days = Math.floor(seconds / (24 * 3600));
+        const hours = Math.floor((seconds % (24 * 3600)) / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+
+        setDuration({ days, hours, minutes, seconds: secs });
+      }, 1000);
+
+      return () => clearInterval(interval);
+    }
+  }, [lastStakeTime]);
   return (
-    <div className="bg-white p-4 rounded-lg shadow-lg flex-col gap-6 flex">
-      <div className="border-b pb-4 flex flex-col gap-2">
-        <h2 className="text-xl font-bold">Your Wallet</h2>
-        <p className="text-gray-600">Address: {address}</p>
-        <p className="text-gray-600">Balance: {ethBalance?.formatted} ETH</p>
-        <div className="flex gap-5">
+    <div className="bg-white p-6 rounded-lg shadow-lg flex flex-col gap-6">
+      {/* Wallet Section */}
+      <div className="border-b pb-6 space-y-4">
+        <div className="flex justify-between items-center">
+          <h2 className="text-2xl font-bold">Your Wallet</h2>
+          <button
+            onClick={refreshData}
+            disabled={isActionDisabled}
+            className="text-blue-500 hover:text-blue-600 disabled:opacity-50"
+          >
+            ↻ Refresh
+          </button>
+        </div>
+
+        <div className="space-y-2">
+          <p className="text-gray-600">
+            Address: <span className="font-mono">{address}</span>
+          </p>
+          <p className="text-gray-600">
+            Balance:{" "}
+            {isLoadingStake ? (
+              <span className="animate-pulse">Loading...</span>
+            ) : (
+              <span className="font-medium">{ethBalance?.formatted} ETH</span>
+            )}
+          </p>
+        </div>
+
+        {/* Staking Input */}
+        <div className="flex gap-4 mt-4">
           <input
+            type="number"
             value={stakeAmount}
             onChange={(e) => setStakeAmount(e.target.value)}
             placeholder="Amount in ETH"
-            className="p-2 border rounded"
+            className="p-3 border rounded-lg flex-1 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            disabled={isActionDisabled}
           />
           <button
-            className="btn-primary"
-            onClick={async () => await handleStake()}
-            disabled={isTransactionPending}
+            className="btn-primary min-w-[120px]"
+            onClick={handleStake}
+            disabled={isActionDisabled}
           >
-            {isTransactionPending ? "Processing..." : "Stake"}
+            {isActionDisabled ? "Processing..." : "Stake"}
           </button>
         </div>
-        <div>
-          <h2 className="text-xl font-bold">Staking</h2>
-          <div className="border-b pb-4 flex flex-col gap-2">
+      </div>
+
+      {/* Staking Information */}
+      <div className="space-y-6">
+        <h2 className="text-2xl font-bold">Staking Information</h2>
+        <div className="space-y-4">
+          {isLoadingStake ? (
+            <div className="animate-pulse h-6 bg-gray-200 rounded w-1/3" />
+          ) : (
             <p className="text-gray-600">
-              {`Total Staked: ${
-                dataStake ? formatEther(dataStake as any) : "0"
-              } ETH`}
+              Total Staked:{" "}
+              <span className="font-medium">
+                {dataStake ? formatEther(dataStake as any) : "0"} ETH
+              </span>
             </p>
-            <button
-              className={`btn-primary ${
-                isTransactionPending ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-              disabled={isTransactionPending}
-              onClick={async () => handleUnstake()}
-            >
-              {isTransactionPending ? "Processing..." : "Unstake"}
-            </button>
-          </div>
+          )}
+
+          <button
+            className="btn-primary w-full"
+            disabled={isActionDisabled || !dataStake || (dataStake as any) <= 0}
+            onClick={handleUnstake}
+          >
+            {isActionDisabled ? "Processing..." : "Unstake"}
+          </button>
         </div>
         <div className="flex justify-between">
-          <p>Staking Duration</p>
-          <p>3days</p>
-        </div>
-        <div>
-          <p>Staking Reward</p>
-          <div className="flex justify-between">
+          <h3 className="text-lg font-semibold">Staking Duration</h3>
+          {isLoadingStakeTime ? (
+            <div className="animate-pulse h-6 bg-gray-200 rounded w-1/3" />
+          ) : (
             <p>
+              {`${duration.days}d ${duration.hours}h ${duration.minutes}m
+            ${duration.seconds}s`}
+            </p>
+          )}
+        </div>
+        {/* Rewards Section */}
+        <div className="border-t pt-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-xl font-semibold">Rewards</h3>
+            <p className="text-gray-600">
               {pendingReward ? formatEther(pendingReward as any) : "0"} $REWARD
             </p>
-            {!isLoadingReward && (pendingReward as any) !== 0 && (
-              <button
-                className={`btn-primary ${
-                  isTransactionPending ? "opacity-50 cursor-not-allowed" : ""
-                }`}
-                disabled={isTransactionPending}
-                onClick={async () => await handleClaim()}
-              >
-                {isTransactionPending ? "Processing..." : "Claim"}
-              </button>
-            )}
           </div>
+
+          {!isLoadingReward && (pendingReward as any) > 0 && (
+            <button
+              className="btn-primary w-full"
+              disabled={isActionDisabled}
+              onClick={handleClaim}
+            >
+              {isActionDisabled ? "Processing..." : "Claim Rewards"}
+            </button>
+          )}
         </div>
       </div>
-      <button onClick={() => disconnect()}>Log Out</button>
+
+      {/* Disconnect Button */}
+      <div className="border-t pt-6">
+        <button
+          onClick={handleDisconnect}
+          className="bg-red-500 w-full px-4 py-3 text-white rounded-lg hover:bg-red-600 transition-colors disabled:opacity-50"
+          disabled={isActionDisabled}
+        >
+          Disconnect Wallet
+        </button>
+      </div>
     </div>
   );
 };
