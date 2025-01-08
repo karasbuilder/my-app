@@ -8,16 +8,16 @@ interface IProps {
   children: React.ReactNode;
   cookie?: string | null;
 }
-const ProviderWallet = ({ children, cookie }: IProps) => {
-  const config = getDefaultConfig({
-    appName: "Stake App ",
-    projectId: String(process.env.REACT_WALLET_ID),
-    chains: [sepolia],
-    transports: {
-      [sepolia.id]: http(),
-    },
-  });
 
+export const config = getDefaultConfig({
+  appName: "Stake App ",
+  projectId: String(process.env.REACT_WALLET_ID),
+  chains: [sepolia],
+  transports: {
+    [sepolia.id]: http(),
+  },
+});
+const ProviderWallet = ({ children, cookie }: IProps) => {
   const queryClient = new QueryClient();
   const initialState = cookieToInitialState(config, cookie);
   return (

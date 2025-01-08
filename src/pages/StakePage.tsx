@@ -1,25 +1,40 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useAccount,
   useBalance,
   useDisconnect,
   useReadContract,
   useWriteContract,
+  useWaitForTransactionReceipt,
+  useTransactionConfirmations,
 } from "wagmi";
+import { toast } from "react-toastify";
 import { STAKING_CONTRACT } from "../utils/web3";
-import { type UseReadContractParameters } from "wagmi";
+
 import { parseEther } from "viem";
 import { formatEther } from "ethers";
+import { waitForTransactionReceipt } from "viem/actions";
+import { config } from "../utils/providers/ProviderWallet";
+
 const StakePage = () => {
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
   const [stakeAmount, setStakeAmount] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [transactionHash, setTransactionHash] = useState("");
+
+  const { isLoading: isTransactionPending, isSuccess } =
+    useWaitForTransactionReceipt({
+      hash: transactionHash as `0x${string}`,
+    });
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address,
   });
   const { writeContract, writeContractAsync } = useWriteContract();
-  const { data: dataStake, isLoading: isLoadingStake } = useReadContract({
+  const {
+    data: dataStake,
+    isLoading: isLoadingStake,
+    refetch: refetchStake,
+  } = useReadContract({
     abi: STAKING_CONTRACT.abi,
     address: STAKING_CONTRACT.address,
     functionName: "stakingBalance",
@@ -33,35 +48,89 @@ const StakePage = () => {
   });
 
   const handleStake = async () => {
+    if (
+      !stakeAmount ||
+      isNaN(Number(stakeAmount)) ||
+      Number(stakeAmount) <= 0
+    ) {
+      toast.error("Please enter a valid stake amount");
+      return;
+    }
+
+    const toastId = toast.loading("Initiating staking transaction...");
     try {
-      setIsLoading(true);
-      const data = await writeContractAsync({
+      const tx = await writeContractAsync({
         abi: STAKING_CONTRACT.abi,
         address: STAKING_CONTRACT.address,
         functionName: "stake",
         value: parseEther(stakeAmount.toString()),
       });
-      setIsLoading(false);
-    } catch (error) {
-      setIsLoading(false);
-      console.error("Error staking:", error);
+      setTransactionHash(tx);
+      toast.update(toastId, {
+        render: "Staking transaction submitted...",
+        type: "info",
+        isLoading: true,
+      });
+
+      await waitForTransactionReceipt(config as any, {
+        hash: tx,
+      });
+      refetchStake();
+      refetchEthBalance();
+      toast.update(toastId, {
+        render: "Staking successful!",
+        type: "success",
+        isLoading: false,
+        autoClose: 5000,
+      });
+
+      setStakeAmount("");
+    } catch (error: any) {
+      toast.update(toastId, {
+        render: error?.message || "Staking failed",
+        type: "error",
+        isLoading: false,
+        autoClose: 5000,
+      });
     }
   };
   const handleUnstake = async () => {
+    const toastId = toast.loading("Initiating unstaking transaction...");
     try {
-      setIsLoading(true);
-      await writeContract({
+      const tx = await writeContractAsync({
         abi: STAKING_CONTRACT.abi,
         address: STAKING_CONTRACT.address,
         functionName: "unstake",
       });
+      setTransactionHash(tx);
+      toast.update(toastId, {
+        render: "Staking transaction submitted...",
+        type: "info",
+        isLoading: true,
+      });
+
+      await waitForTransactionReceipt(config as any, {
+        hash: tx,
+      });
+      refetchStake();
       refetchEthBalance();
-      setIsLoading(false);
-    } catch (error) {
-      setIsLoading(false);
-      console.error("Error unstaking:", error);
+    } catch (error: any) {
+      toast.update(toastId, {
+        render: error?.message || "Unstaking Failed",
+        type: "error",
+        isLoading: false,
+        autoClose: 5000,
+      });
     }
   };
+
+  //   useEffect(() => {
+  //     if (isTransactionPending && isSuccess) {
+  //       toast.success("Transaction successful");
+  //       refetchStake();
+  //       refetchEthBalance();
+  //     }
+  //   }, [isTransactionPending, isSuccess]);
   return (
     <div className="bg-white p-4 rounded-lg shadow-lg flex-col gap-6 flex">
       <div className="border-b pb-4 flex flex-col gap-2">
@@ -77,23 +146,22 @@ const StakePage = () => {
           />
           <button
             className="btn-primary"
-            disabled={isLoading}
-            onClick={async () => handleStake()}
+            onClick={async () => await handleStake()}
+            disabled={isTransactionPending}
           >
-            Stake
+            {isTransactionPending ? "Processing..." : "Stake"}
           </button>
         </div>
         <div>
           <h2 className="text-xl font-bold">Staking</h2>
           <div className="border-b pb-4 flex flex-col gap-2">
             <p className="text-gray-600">
-              Total Staked:
-              {isLoadingStake ? "Loading..." : (dataStake as number).toString()}
-              ETH
+              {`Total Staked: ${
+                dataStake ? formatEther(dataStake as any) : "0"
+              } ETH`}
             </p>
             <button
               className="btn-primary"
-              disabled={isLoading}
               onClick={async () => handleUnstake()}
             >
               Unstake
@@ -110,13 +178,11 @@ const StakePage = () => {
             <p>
               {pendingReward ? formatEther(pendingReward as any) : "0"} $REWARD
             </p>
-            <button className="btn-primary" disabled={isLoading}>
-              Claim
-            </button>
+            <button className="btn-primary">Claim</button>
           </div>
         </div>
       </div>
-      <button onClick={() => disconnect()}>Lougout</button>
+      <button onClick={() => disconnect()}>Log Out</button>
     </div>
   );
 };
