@@ -3,7 +3,7 @@ import { getDefaultConfig, RainbowKitProvider } from "@rainbow-me/rainbowkit";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { sepolia } from "viem/chains";
-import { cookieToInitialState, WagmiProvider } from "wagmi";
+import { cookieToInitialState, http, WagmiProvider } from "wagmi";
 interface IProps {
   children: React.ReactNode;
   cookie?: string | null;
@@ -13,6 +13,9 @@ const ProviderWallet = ({ children, cookie }: IProps) => {
     appName: "Stake App ",
     projectId: String(process.env.REACT_WALLET_ID),
     chains: [sepolia],
+    transports: {
+      [sepolia.id]: http(),
+    },
   });
 
   const queryClient = new QueryClient();
