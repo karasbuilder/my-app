@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   useAccount,
   useBalance,
@@ -6,7 +6,6 @@ import {
   useReadContract,
   useWriteContract,
   useWaitForTransactionReceipt,
-  useTransactionConfirmations,
 } from "wagmi";
 import { toast } from "react-toastify";
 import { STAKING_CONTRACT } from "../utils/web3";
@@ -22,10 +21,9 @@ const StakePage = () => {
   const [stakeAmount, setStakeAmount] = useState("");
   const [transactionHash, setTransactionHash] = useState("");
 
-  const { isLoading: isTransactionPending, isSuccess } =
-    useWaitForTransactionReceipt({
-      hash: transactionHash as `0x${string}`,
-    });
+  const { isLoading: isTransactionPending } = useWaitForTransactionReceipt({
+    hash: transactionHash as `0x${string}`,
+  });
   const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address,
   });
@@ -40,7 +38,7 @@ const StakePage = () => {
     functionName: "stakingBalance",
     args: [address],
   });
-  const { data: pendingReward } = useReadContract({
+  const { data: pendingReward, isLoading: isLoadingReward } = useReadContract({
     address: STAKING_CONTRACT.address,
     abi: STAKING_CONTRACT.abi,
     functionName: "getPendingReward",
@@ -123,6 +121,42 @@ const StakePage = () => {
       });
     }
   };
+  const handleClaim = async () => {
+    const toastId = toast.loading("Initiating reward claim...");
+
+    try {
+      const tx = await writeContractAsync({
+        abi: STAKING_CONTRACT.abi,
+        address: STAKING_CONTRACT.address,
+        functionName: "claimReward",
+      });
+      setTransactionHash(tx);
+      toast.update(toastId, {
+        render: "Claiming reward...",
+        type: "info",
+        isLoading: true,
+      });
+      await waitForTransactionReceipt(config as any, {
+        hash: tx,
+      });
+
+      toast.update(toastId, {
+        render: "Reward claimed!",
+        type: "success",
+        isLoading: false,
+        autoClose: 5000,
+      });
+      refetchStake();
+      refetchEthBalance();
+    } catch (error: any) {
+      toast.update(toastId, {
+        render: error?.message || "Reward claim failed",
+        type: "error",
+        isLoading: false,
+        autoClose: 5000,
+      });
+    }
+  };
 
   //   useEffect(() => {
   //     if (isTransactionPending && isSuccess) {
@@ -161,10 +195,13 @@ const StakePage = () => {
               } ETH`}
             </p>
             <button
-              className="btn-primary"
+              className={`btn-primary ${
+                isTransactionPending ? "opacity-50 cursor-not-allowed" : ""
+              }`}
+              disabled={isTransactionPending}
               onClick={async () => handleUnstake()}
             >
-              Unstake
+              {isTransactionPending ? "Processing..." : "Unstake"}
             </button>
           </div>
         </div>
@@ -178,7 +215,17 @@ const StakePage = () => {
             <p>
               {pendingReward ? formatEther(pendingReward as any) : "0"} $REWARD
             </p>
-            <button className="btn-primary">Claim</button>
+            {!isLoadingReward && (pendingReward as any) !== 0 && (
+              <button
+                className={`btn-primary ${
+                  isTransactionPending ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+                disabled={isTransactionPending}
+                onClick={async () => await handleClaim()}
+              >
+                {isTransactionPending ? "Processing..." : "Claim"}
+              </button>
+            )}
           </div>
         </div>
       </div>
