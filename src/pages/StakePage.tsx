@@ -5,7 +5,6 @@ import {
   useDisconnect,
   useReadContract,
   useWriteContract,
-  useWaitForTransactionReceipt,
 } from "wagmi";
 import { toast } from "react-toastify";
 import { STAKING_CONTRACT } from "../utils/web3";
@@ -103,6 +102,10 @@ const StakePage = () => {
 
   // Action handlers
   const handleStake = async () => {
+    if (ethBalance && Number(ethBalance?.formatted) < Number(stakeAmount)) {
+      toast.error("Insufficient balance");
+      return;
+    }
     if (
       !stakeAmount ||
       isNaN(Number(stakeAmount)) ||
