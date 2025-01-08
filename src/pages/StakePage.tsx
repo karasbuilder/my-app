@@ -9,41 +9,56 @@ import {
 import { STAKING_CONTRACT } from "../utils/web3";
 import { type UseReadContractParameters } from "wagmi";
 import { parseEther } from "viem";
+import { formatEther } from "ethers";
 const StakePage = () => {
   const { address } = useAccount();
   const { disconnect } = useDisconnect();
   const [stakeAmount, setStakeAmount] = useState("");
-
-  const { data: ethBalance } = useBalance({
+  const [isLoading, setIsLoading] = useState(false);
+  const { data: ethBalance, refetch: refetchEthBalance } = useBalance({
     address,
   });
-  const { writeContract } = useWriteContract();
+  const { writeContract, writeContractAsync } = useWriteContract();
   const { data: dataStake, isLoading: isLoadingStake } = useReadContract({
     abi: STAKING_CONTRACT.abi,
     address: STAKING_CONTRACT.address,
     functionName: "stakingBalance",
     args: [address],
   });
+  const { data: pendingReward } = useReadContract({
+    address: STAKING_CONTRACT.address,
+    abi: STAKING_CONTRACT.abi,
+    functionName: "getPendingReward",
+    args: [address],
+  });
+
   const handleStake = async () => {
     try {
-      writeContract({
+      setIsLoading(true);
+      const data = await writeContractAsync({
         abi: STAKING_CONTRACT.abi,
         address: STAKING_CONTRACT.address,
         functionName: "stake",
         value: parseEther(stakeAmount.toString()),
       });
+      setIsLoading(false);
     } catch (error) {
+      setIsLoading(false);
       console.error("Error staking:", error);
     }
   };
   const handleUnstake = async () => {
     try {
+      setIsLoading(true);
       await writeContract({
         abi: STAKING_CONTRACT.abi,
         address: STAKING_CONTRACT.address,
         functionName: "unstake",
       });
+      refetchEthBalance();
+      setIsLoading(false);
     } catch (error) {
+      setIsLoading(false);
       console.error("Error unstaking:", error);
     }
   };
@@ -60,7 +75,11 @@ const StakePage = () => {
             placeholder="Amount in ETH"
             className="p-2 border rounded"
           />
-          <button className="btn-primary" onClick={async () => handleStake()}>
+          <button
+            className="btn-primary"
+            disabled={isLoading}
+            onClick={async () => handleStake()}
+          >
             Stake
           </button>
         </div>
@@ -68,11 +87,17 @@ const StakePage = () => {
           <h2 className="text-xl font-bold">Staking</h2>
           <div className="border-b pb-4 flex flex-col gap-2">
             <p className="text-gray-600">
-              Total Staked:{" "}
-              {isLoadingStake ? "Loading..." : (dataStake as number).toString()}{" "}
-              ETH{" "}
+              Total Staked:
+              {isLoadingStake ? "Loading..." : (dataStake as number).toString()}
+              ETH
             </p>
-            <button className="btn-primary">Unstake</button>
+            <button
+              className="btn-primary"
+              disabled={isLoading}
+              onClick={async () => handleUnstake()}
+            >
+              Unstake
+            </button>
           </div>
         </div>
         <div className="flex justify-between">
@@ -82,8 +107,12 @@ const StakePage = () => {
         <div>
           <p>Staking Reward</p>
           <div className="flex justify-between">
-            <p>0.1 $REWARD</p>
-            <button className="btn-primary">Claim</button>
+            <p>
+              {pendingReward ? formatEther(pendingReward as any) : "0"} $REWARD
+            </p>
+            <button className="btn-primary" disabled={isLoading}>
+              Claim
+            </button>
           </div>
         </div>
       </div>
